@@ -166,7 +166,6 @@ Desktop.ini
 logs/
 temp/
 tmp/
-documents/
 *.pkl
 *.pickle
 *.h5
