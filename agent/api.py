@@ -6,6 +6,7 @@ import os
 import asyncio
 import json
 import logging
+from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Dict, Any, List, Optional
 from datetime import datetime
@@ -13,8 +14,10 @@ import uuid
 
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.staticfiles import StaticFiles
 import uvicorn
 from dotenv import load_dotenv
 
@@ -652,6 +655,35 @@ async def global_exception_handler(request: Request, exc: Exception):
         error_type=type(exc).__name__,
         request_id=str(uuid.uuid4())
     )
+
+
+def _get_ui_dist_dir() -> Optional[Path]:
+    """
+    Get the UI dist directory for static serving.
+
+    Returns:
+        Path to UI dist directory if it exists, otherwise None.
+    """
+    configured = os.getenv("UI_DIST_DIR")
+    if configured:
+        p = Path(configured).expanduser()
+        if not p.is_absolute():
+            p = Path(__file__).resolve().parent.parent / p
+    else:
+        p = Path(__file__).resolve().parent.parent / "ui" / "dist"
+
+    return p if p.exists() and p.is_dir() else None
+
+
+# Serve React build (same-origin) if present.
+_ui_dist = _get_ui_dist_dir()
+if _ui_dist:
+    app.mount("/", StaticFiles(directory=str(_ui_dist), html=True), name="ui")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        index_path = _ui_dist / "index.html"
+        return FileResponse(str(index_path))
 
 
 # Development server

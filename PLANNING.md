@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-This project builds an AI agent system that combines traditional RAG (Retrieval Augmented Generation) with knowledge graph capabilities to analyze and provide insights about big tech companies and their AI initiatives. The system uses PostgreSQL with pgvector for vector search and Neo4j (via Graphiti) for knowledge graph operations.
+This project builds an AI agent system that combines traditional RAG (Retrieval Augmented Generation) with knowledge graph capabilities. The system uses PostgreSQL with pgvector for vector search and Neo4j (via Graphiti) for knowledge graph operations.
 
 ## Architecture Overview
 

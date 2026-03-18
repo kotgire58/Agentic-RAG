@@ -180,7 +180,42 @@ python -m agent.api
 # Server will be available at http://localhost:8058
 ```
 
-### 5. Use the Command Line Interface (Terminal 2)
+### 5. Use the React UI (Recommended)
+
+The project includes a React UI under `ui/` that supports real-time streaming responses and shows which tools the agent used.
+
+#### Option A: Dev mode (Vite)
+
+Run the API and UI in two terminals:
+
+```bash
+# Terminal 1 (API)
+python -m agent.api
+
+# Terminal 2 (UI)
+cd ui
+npm install
+npm run dev
+```
+
+Then open the URL printed by Vite (usually `http://localhost:5173`). The dev server proxies API requests to `http://localhost:8058`.
+
+#### Option B: Same-origin production (FastAPI serves UI)
+
+Build the UI, then start the API. FastAPI will serve `ui/dist` at `/`.
+
+```bash
+cd ui
+npm install
+npm run build
+
+cd ..
+python -m agent.api
+```
+
+Then open `http://localhost:8058`.
+
+### 6. Use the Command Line Interface (Terminal 2)
 
 The CLI provides an interactive way to chat with the agent and see which tools it uses for each query.
 
@@ -240,7 +275,7 @@ Microsoft has a significant strategic partnership with OpenAI...
 - `clear` - Clear current session
 - `exit` or `quit` - Exit the CLI
 
-### 6. Test the System
+### 7. Test the System
 
 #### Health Check
 ```bash
