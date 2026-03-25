@@ -31,16 +31,27 @@ from .db_utils import (
     get_session_messages,
     test_connection
 )
-from .graph_utils import initialize_graph, close_graph, test_graph_connection
+from .graph_utils import (
+    initialize_graph,
+    close_graph,
+    test_graph_connection,
+    search_knowledge_graph_with_visualization,
+    get_subgraph_by_entity_name,
+)
+from .prompts import get_mode_instruction
 from .models import (
     ChatRequest,
     ChatResponse,
     SearchRequest,
     SearchResponse,
+    EntityGraphRequest,
     StreamDelta,
     ErrorResponse,
     HealthStatus,
-    ToolCall
+    ToolCall,
+    GraphNode,
+    GraphEdge,
+    GraphVisualizationData
 )
 from .tools import (
     vector_search_tool,
@@ -289,25 +300,28 @@ async def execute_agent(
     message: str,
     session_id: str,
     user_id: Optional[str] = None,
+    search_type: Optional[str] = None,
     save_conversation: bool = True
 ) -> tuple[str, List[ToolCall]]:
     """
     Execute the agent with a message.
-    
+
     Args:
         message: User message
         session_id: Session ID
         user_id: Optional user ID
+        search_type: Tab mode - 'graph', 'vector', or 'hybrid' (agentic)
         save_conversation: Whether to save the conversation
-    
+
     Returns:
         Tuple of (agent response, tools used)
     """
     try:
-        # Create dependencies
+        # Create dependencies (search_type restricts which tools are allowed)
         deps = AgentDependencies(
             session_id=session_id,
-            user_id=user_id
+            user_id=user_id,
+            search_type=search_type
         )
         
         # Get conversation context
@@ -321,7 +335,12 @@ async def execute_agent(
                 for msg in context[-6:]  # Last 3 turns
             ])
             full_prompt = f"Previous conversation:\n{context_str}\n\nCurrent question: {message}"
-        
+
+        # Prepend mode-specific instruction for Graph/Vector tabs
+        mode_instruction = get_mode_instruction(search_type)
+        if mode_instruction:
+            full_prompt = f"{mode_instruction}\n\n{full_prompt}"
+
         # Run the agent
         result = await rag_agent.run(full_prompt, deps=deps)
         
@@ -399,7 +418,8 @@ async def chat(request: ChatRequest):
         response, tools_used = await execute_agent(
             message=request.message,
             session_id=session_id,
-            user_id=request.user_id
+            user_id=request.user_id,
+            search_type=request.search_type
         )
         
         return ChatResponse(
@@ -426,10 +446,11 @@ async def chat_stream(request: ChatRequest):
             try:
                 yield f"data: {json.dumps({'type': 'session', 'session_id': session_id})}\n\n"
                 
-                # Create dependencies
+                # Create dependencies (search_type restricts which tools are allowed)
                 deps = AgentDependencies(
                     session_id=session_id,
-                    user_id=request.user_id
+                    user_id=request.user_id,
+                    search_type=request.search_type
                 )
                 
                 # Get conversation context
@@ -443,7 +464,12 @@ async def chat_stream(request: ChatRequest):
                         for msg in context[-6:]
                     ])
                     full_prompt = f"Previous conversation:\n{context_str}\n\nCurrent question: {request.message}"
-                
+
+                # Prepend mode-specific instruction for Graph/Vector tabs
+                mode_instruction = get_mode_instruction(request.search_type)
+                if mode_instruction:
+                    full_prompt = f"{mode_instruction}\n\n{full_prompt}"
+
                 # Save user message immediately
                 await add_message(
                     session_id=session_id,
@@ -554,27 +580,72 @@ async def search_vector(request: SearchRequest):
 
 @app.post("/search/graph")
 async def search_graph(request: SearchRequest):
-    """Knowledge graph search endpoint."""
+    """Knowledge graph search endpoint with visualization data."""
     try:
-        input_data = GraphSearchInput(
-            query=request.query
-        )
-        
         start_time = datetime.now()
-        results = await graph_search_tool(input_data)
+        data = await search_knowledge_graph_with_visualization(request.query)
         end_time = datetime.now()
-        
+
+        results = data["results"]
+        graph_data_raw = data["graph_data"]
+
+        # Convert to GraphSearchResult and GraphVisualizationData
+        graph_results = [
+            {
+                "fact": r["fact"],
+                "uuid": r["uuid"],
+                "valid_at": r.get("valid_at"),
+                "invalid_at": r.get("invalid_at"),
+                "source_node_uuid": r.get("source_node_uuid"),
+            }
+            for r in results
+        ]
+        graph_data = GraphVisualizationData(
+            nodes=[GraphNode(**n) for n in graph_data_raw.get("nodes", [])],
+            edges=[GraphEdge(**e) for e in graph_data_raw.get("edges", [])],
+        ) if graph_data_raw.get("nodes") or graph_data_raw.get("edges") else None
+
         query_time = (end_time - start_time).total_seconds() * 1000
-        
+
         return SearchResponse(
-            graph_results=results,
+            graph_results=graph_results,
+            graph_data=graph_data,
             total_results=len(results),
             search_type="graph",
             query_time_ms=query_time
         )
-        
+
     except Exception as e:
         logger.error(f"Graph search failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/search/graph/entity")
+async def search_graph_entity(request: EntityGraphRequest):
+    """Entity-based graph visualization endpoint (1-hop neighborhood)."""
+    try:
+        start_time = datetime.now()
+        graph_data_raw = await get_subgraph_by_entity_name(
+            entity_name=request.entity_name,
+            max_neighbors=request.max_neighbors
+        )
+        end_time = datetime.now()
+
+        graph_data = GraphVisualizationData(
+            nodes=[GraphNode(**n) for n in graph_data_raw.get("nodes", [])],
+            edges=[GraphEdge(**e) for e in graph_data_raw.get("edges", [])],
+        ) if graph_data_raw.get("nodes") or graph_data_raw.get("edges") else None
+
+        query_time = (end_time - start_time).total_seconds() * 1000
+
+        return SearchResponse(
+            graph_data=graph_data,
+            total_results=len(graph_data_raw.get("nodes", [])),
+            search_type="graph",
+            query_time_ms=query_time
+        )
+    except Exception as e:
+        logger.error(f"Entity graph visualization failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

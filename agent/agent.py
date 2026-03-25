@@ -40,8 +40,9 @@ class AgentDependencies:
     """Dependencies for the agent."""
     session_id: str
     user_id: Optional[str] = None
+    search_type: Optional[str] = None  # 'graph' | 'vector' | 'hybrid' (agentic)
     search_preferences: Dict[str, Any] = None
-    
+
     def __post_init__(self):
         if self.search_preferences is None:
             self.search_preferences = {
@@ -49,6 +50,23 @@ class AgentDependencies:
                 "use_graph": True,
                 "default_limit": 10
             }
+        # Normalize search_type (handles enum or str from API)
+        st = self._normalize_search_type(self.search_type)
+        # Restrict tools based on tab mode
+        if st == "graph":
+            self.search_preferences["use_vector"] = False
+            self.search_preferences["use_graph"] = True
+        elif st == "vector":
+            self.search_preferences["use_vector"] = True
+            self.search_preferences["use_graph"] = False
+
+    @staticmethod
+    def _normalize_search_type(st) -> str:
+        """Normalize search_type to lowercase string (handles enum or str)."""
+        if st is None:
+            return ""
+        val = getattr(st, "value", st) if hasattr(st, "value") else st
+        return str(val).lower() if val else ""
 
 
 # Initialize the agent with flexible model configuration
@@ -60,6 +78,16 @@ rag_agent = Agent(
 
 
 # Register tools with proper docstrings (no description parameter)
+def _tool_allowed(ctx: RunContext[AgentDependencies], tool_type: str) -> bool:
+    """Check if tool type is allowed in current mode (vector/graph/hybrid)."""
+    prefs = getattr(ctx.deps, "search_preferences", None) or {}
+    if tool_type == "vector":
+        return prefs.get("use_vector", True)
+    if tool_type == "graph":
+        return prefs.get("use_graph", True)
+    return True
+
+
 @rag_agent.tool
 async def vector_search(
     ctx: RunContext[AgentDependencies],
@@ -80,6 +108,8 @@ async def vector_search(
     Returns:
         List of matching chunks ordered by similarity (best first)
     """
+    if not _tool_allowed(ctx, "vector"):
+        return []
     input_data = VectorSearchInput(
         query=query,
         limit=limit
@@ -118,8 +148,10 @@ async def graph_search(
     Returns:
         List of facts with associated episodes and temporal data
     """
+    if not _tool_allowed(ctx, "graph"):
+        return []
     input_data = GraphSearchInput(query=query)
-    
+
     results = await graph_search_tool(input_data)
     
     # Convert results to dict for agent
@@ -157,12 +189,14 @@ async def hybrid_search(
     Returns:
         List of chunks ranked by combined relevance score
     """
+    if not _tool_allowed(ctx, "vector"):
+        return []
     input_data = HybridSearchInput(
         query=query,
         limit=limit,
         text_weight=text_weight
     )
-    
+
     results = await hybrid_search_tool(input_data)
     
     # Convert results to dict for agent
@@ -271,11 +305,13 @@ async def get_entity_relationships(
     Returns:
         Entity relationships and connected entities with relationship types
     """
+    if not _tool_allowed(ctx, "graph"):
+        return {"error": "Graph tools not available in this mode", "relationships": []}
     input_data = EntityRelationshipInput(
         entity_name=entity_name,
         depth=depth
     )
-    
+
     return await get_entity_relationships_tool(input_data)
 
 
@@ -301,10 +337,12 @@ async def get_entity_timeline(
     Returns:
         Chronological list of facts about the entity with timestamps
     """
+    if not _tool_allowed(ctx, "graph"):
+        return []
     input_data = EntityTimelineInput(
         entity_name=entity_name,
         start_date=start_date,
         end_date=end_date
     )
-    
+
     return await get_entity_timeline_tool(input_data)

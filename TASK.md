@@ -295,6 +295,24 @@ This document tracks all tasks for building the agentic RAG system with knowledg
 
 ---
 
+## Phase 8: Graph Traversal Visualization
+
+- [x] Add Neo4j subgraph extraction in graph_utils (get_subgraph)
+- [x] Add search_knowledge_graph_with_visualization returning nodes/edges
+- [x] Update /search/graph API to return graph_data for visualization
+- [x] Add GraphNode, GraphEdge, GraphVisualizationData models
+- [x] Add GraphVisualization React component (react-force-graph-2d)
+- [x] Wire ChatPage: "Show traversal path" when graph_search used
+- [x] Add unit tests for graph visualization
+- [x] Add get_subgraph_by_entity_name for entity-based 1-hop neighborhood
+- [x] Add POST /search/graph/entity endpoint for entity visualization
+- [x] Wire "Show traversal path" for get_entity_relationships and get_entity_timeline
+- [x] Add EntityGraphRequest model and entity graph tests
+- [x] Add 3-tab UI: Graph, Vector, Agentic with tool restriction by mode
+- [x] Multihop detection: vector/hybrid search returns empty for relationship questions (graceful natural failure)
+
+---
+
 ## Project Status
 
 ✅ **All core functionality completed and tested**

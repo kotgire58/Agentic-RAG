@@ -31,6 +31,8 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+from .query_utils import is_multihop_query
+
 # Initialize embedding client with flexible provider
 embedding_client = get_embedding_client()
 EMBEDDING_MODEL = get_embedding_model()
@@ -112,6 +114,9 @@ async def vector_search_tool(input_data: VectorSearchInput) -> List[ChunkResult]
         List of matching chunks
     """
     try:
+        # Multihop/relationship questions need graph search; return empty naturally
+        if is_multihop_query(input_data.query):
+            return []
         # Generate embedding for the query
         embedding = await generate_embedding(input_data.query)
         
@@ -183,6 +188,9 @@ async def hybrid_search_tool(input_data: HybridSearchInput) -> List[ChunkResult]
         List of matching chunks
     """
     try:
+        # Multihop/relationship questions need graph search; return empty naturally
+        if is_multihop_query(input_data.query):
+            return []
         # Generate embedding for the query
         embedding = await generate_embedding(input_data.query)
         

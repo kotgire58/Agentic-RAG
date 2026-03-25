@@ -45,6 +45,12 @@ class SearchRequest(BaseModel):
     model_config = ConfigDict(use_enum_values=True)
 
 
+class EntityGraphRequest(BaseModel):
+    """Request model for entity-based graph visualization."""
+    entity_name: str = Field(..., description="Entity name to visualize neighborhood")
+    max_neighbors: int = Field(default=20, ge=1, le=50, description="Max nodes to return")
+
+
 # Response Models
 class DocumentMetadata(BaseModel):
     """Document metadata model."""
@@ -91,10 +97,31 @@ class EntityRelationship(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
+class GraphNode(BaseModel):
+    """Graph node for visualization."""
+    id: str
+    label: str
+    type: str = "Entity"
+
+
+class GraphEdge(BaseModel):
+    """Graph edge for visualization."""
+    source: str
+    target: str
+    type: str = "RELATES_TO"
+
+
+class GraphVisualizationData(BaseModel):
+    """Graph data for traversal visualization."""
+    nodes: List[GraphNode] = Field(default_factory=list)
+    edges: List[GraphEdge] = Field(default_factory=list)
+
+
 class SearchResponse(BaseModel):
     """Search response model."""
     results: List[ChunkResult] = Field(default_factory=list)
     graph_results: List[GraphSearchResult] = Field(default_factory=list)
+    graph_data: Optional[GraphVisualizationData] = None
     total_results: int = 0
     search_type: SearchType
     query_time_ms: float

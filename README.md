@@ -330,6 +330,7 @@ The system excels at queries that benefit from both semantic search and relation
 
 - **Relationship Questions**: "How are Microsoft and OpenAI connected?"
   - Uses knowledge graph to traverse relationships and partnerships
+  - **Graph Visualization**: In the web UI, when the agent uses graph search, click "Show traversal path" in the Tools panel to see an interactive visualization of how the graph was traversed to reach the answer
 
 - **Temporal Questions**: "Show me the timeline of Meta's AI announcements"
   - Leverages Graphiti's temporal capabilities to track changes over time

@@ -306,6 +306,201 @@ class GraphitiClient:
                 "error": str(e)
             }
     
+    async def get_subgraph(
+        self,
+        node_uuids: List[str],
+        max_hops: int = 2
+    ) -> Dict[str, Any]:
+        """
+        Fetch induced subgraph for visualization: only seed nodes and edges
+        between them. No expansion to neighbors.
+
+        Args:
+            node_uuids: List of entity node UUIDs (e.g. from search source_node_uuid)
+            max_hops: Unused; kept for API compatibility
+
+        Returns:
+            Dict with "nodes" and "edges" for visualization
+        """
+        if not node_uuids:
+            return {"nodes": [], "edges": []}
+
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            driver = self.graphiti.driver
+
+            # Induced subgraph only: nodes that were in the search results (seed set)
+            # and edges that connect those nodes. No expansion to neighbors.
+            cypher_induced = """
+            MATCH (n) WHERE n.uuid IN $uuids
+            OPTIONAL MATCH (n)-[r]-(m)
+            WHERE m.uuid IN $uuids AND m IS NOT NULL AND n <> m AND r IS NOT NULL
+            RETURN n, r, m
+            """
+
+            nodes_by_id: Dict[str, Dict[str, Any]] = {}
+            edges_set: set = set()
+
+            records = []
+            async with driver.session(database="neo4j") as session:
+                result = await session.run(cypher_induced, uuids=node_uuids)
+                async for record in result:
+                    records.append(record)
+
+            for record in records:
+                n, r, m = record.get("n"), record.get("r"), record.get("m")
+                if n is None:
+                    continue
+
+                def node_to_dict(node) -> Dict[str, Any]:
+                    if node is None:
+                        return {}
+                    nid = node.element_id if hasattr(node, "element_id") else str(id(node))
+                    uuid_val = node.get("uuid", nid) if hasattr(node, "get") else nid
+                    name_val = node.get("name", uuid_val) if hasattr(node, "get") else uuid_val
+                    labels = list(node.labels) if hasattr(node, "labels") else ["Entity"]
+                    return {
+                        "id": str(uuid_val),
+                        "label": str(name_val) if name_val else str(nid),
+                        "type": labels[0] if labels else "Entity",
+                    }
+
+                def rel_to_edge(rel, src_node, tgt_node) -> Optional[tuple]:
+                    if rel is None or src_node is None or tgt_node is None:
+                        return None
+                    src_id = src_node.get("uuid", getattr(src_node, "element_id", str(id(src_node)))) if hasattr(src_node, "get") else str(id(src_node))
+                    tgt_id = tgt_node.get("uuid", getattr(tgt_node, "element_id", str(id(tgt_node)))) if hasattr(tgt_node, "get") else str(id(tgt_node))
+                    rel_type = rel.type if hasattr(rel, "type") else str(type(rel).__name__)
+                    return (str(src_id), str(tgt_id), rel_type)
+
+                nodes_by_id[node_to_dict(n)["id"]] = node_to_dict(n)
+                if m is not None:
+                    nodes_by_id[node_to_dict(m)["id"]] = node_to_dict(m)
+                if r is not None and m is not None:
+                    edge = rel_to_edge(r, n, m)
+                    if edge:
+                        # Normalize so (A,B) and (B,A) don't duplicate
+                        src, tgt, rel_type = edge
+                        key = (min(src, tgt), max(src, tgt), rel_type)
+                        edges_set.add(key)
+
+            edges = [
+                {"source": src, "target": tgt, "type": rel_type}
+                for src, tgt, rel_type in edges_set
+            ]
+            nodes = list(nodes_by_id.values())
+
+            return {"nodes": nodes, "edges": edges}
+
+        except Exception as e:
+            logger.warning(f"Subgraph extraction failed: {e}")
+            return {"nodes": [], "edges": []}
+
+    async def get_subgraph_by_entity_name(
+        self,
+        entity_name: str,
+        max_neighbors: int = 20
+    ) -> Dict[str, Any]:
+        """
+        Fetch 1-hop neighborhood for an entity by name (for relationships viz).
+        Finds Entity nodes matching the name and returns entity + direct neighbors.
+
+        Args:
+            entity_name: Entity name to look up (case-insensitive partial match)
+            max_neighbors: Max nodes to return (avoids huge graphs)
+
+        Returns:
+            Dict with "nodes" and "edges" for visualization
+        """
+        if not entity_name or not entity_name.strip():
+            return {"nodes": [], "edges": []}
+
+        if not self._initialized:
+            await self.initialize()
+
+        try:
+            driver = self.graphiti.driver
+
+            # Find Entity nodes by name (case-insensitive), get 1-hop neighborhood
+            cypher = """
+            MATCH (n:Entity)
+            WHERE toLower(n.name) CONTAINS toLower($entity_name)
+               OR toLower(n.name) = toLower($entity_name)
+            WITH n LIMIT 3
+            OPTIONAL MATCH (n)-[r]-(m)
+            WHERE m IS NOT NULL AND r IS NOT NULL
+            WITH n, r, m
+            LIMIT $max_limit
+            RETURN n, r, m
+            """
+
+            nodes_by_id: Dict[str, Dict[str, Any]] = {}
+            edges_set: set = set()
+            max_limit = max_neighbors * 2  # Rough limit for rows
+
+            records = []
+            async with driver.session(database="neo4j") as session:
+                result = await session.run(
+                    cypher,
+                    entity_name=entity_name.strip(),
+                    max_limit=max_limit
+                )
+                async for record in result:
+                    records.append(record)
+
+            for record in records:
+                n, r, m = record.get("n"), record.get("r"), record.get("m")
+                if n is None:
+                    continue
+
+                def node_to_dict(node) -> Dict[str, Any]:
+                    if node is None:
+                        return {}
+                    nid = node.element_id if hasattr(node, "element_id") else str(id(node))
+                    uuid_val = node.get("uuid", nid) if hasattr(node, "get") else nid
+                    name_val = node.get("name", uuid_val) if hasattr(node, "get") else uuid_val
+                    labels = list(node.labels) if hasattr(node, "labels") else ["Entity"]
+                    return {
+                        "id": str(uuid_val),
+                        "label": str(name_val) if name_val else str(nid),
+                        "type": labels[0] if labels else "Entity",
+                    }
+
+                def rel_to_edge(rel, src_node, tgt_node) -> Optional[tuple]:
+                    if rel is None or src_node is None or tgt_node is None:
+                        return None
+                    src_id = src_node.get("uuid", getattr(src_node, "element_id", str(id(src_node)))) if hasattr(src_node, "get") else str(id(src_node))
+                    tgt_id = tgt_node.get("uuid", getattr(tgt_node, "element_id", str(id(tgt_node)))) if hasattr(tgt_node, "get") else str(id(tgt_node))
+                    rel_type = rel.type if hasattr(rel, "type") else str(type(rel).__name__)
+                    return (str(src_id), str(tgt_id), rel_type)
+
+                nodes_by_id[node_to_dict(n)["id"]] = node_to_dict(n)
+                if m is not None:
+                    nodes_by_id[node_to_dict(m)["id"]] = node_to_dict(m)
+                if r is not None and m is not None:
+                    edge = rel_to_edge(r, n, m)
+                    if edge:
+                        src, tgt, rel_type = edge
+                        key = (min(src, tgt), max(src, tgt), rel_type)
+                        edges_set.add(key)
+
+                if len(nodes_by_id) >= max_neighbors:
+                    break
+
+            edges = [
+                {"source": src, "target": tgt, "type": rel_type}
+                for src, tgt, rel_type in edges_set
+            ]
+            nodes = list(nodes_by_id.values())
+
+            return {"nodes": nodes, "edges": edges}
+
+        except Exception as e:
+            logger.warning(f"Subgraph by entity failed: {e}")
+            return {"nodes": [], "edges": []}
+
     async def clear_graph(self):
         """Clear all data from the graph (USE WITH CAUTION)."""
         if not self._initialized:
@@ -414,6 +609,36 @@ async def search_knowledge_graph(
     return await graph_client.search(query)
 
 
+async def search_knowledge_graph_with_visualization(
+    query: str,
+    max_visualization_nodes: int = 12
+) -> Dict[str, Any]:
+    """
+    Search the knowledge graph and fetch subgraph for visualization.
+    Only returns nodes that appeared in the search results (traversed) and
+    edges between them—no expansion to the full graph.
+
+    Args:
+        query: Search query
+        max_visualization_nodes: Max seed nodes to include (keeps viz focused)
+
+    Returns:
+        Dict with "results" (list of search results) and "graph_data" (nodes, edges)
+    """
+    results = await graph_client.search(query)
+    node_uuids = [
+        r["source_node_uuid"]
+        for r in results
+        if r.get("source_node_uuid")
+    ]
+    node_uuids = list(dict.fromkeys(node_uuids))[:max_visualization_nodes]  # dedupe, limit
+    graph_data = await graph_client.get_subgraph(node_uuids)
+    return {
+        "results": results,
+        "graph_data": graph_data,
+    }
+
+
 async def get_entity_relationships(
     entity: str,
     depth: int = 2
@@ -429,6 +654,26 @@ async def get_entity_relationships(
         Entity relationships
     """
     return await graph_client.get_related_entities(entity, depth=depth)
+
+
+async def get_subgraph_by_entity_name(
+    entity_name: str,
+    max_neighbors: int = 20
+) -> Dict[str, Any]:
+    """
+    Fetch 1-hop neighborhood for an entity by name (for relationships/timeline viz).
+
+    Args:
+        entity_name: Entity name to look up
+        max_neighbors: Max nodes to return
+
+    Returns:
+        Dict with "nodes" and "edges" for visualization
+    """
+    return await graph_client.get_subgraph_by_entity_name(
+        entity_name=entity_name,
+        max_neighbors=max_neighbors
+    )
 
 
 async def test_graph_connection() -> bool:
